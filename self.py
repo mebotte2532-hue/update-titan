@@ -109,7 +109,7 @@ import pickle
 from pyrogram.errors.exceptions.bad_request_400 import ChatNotModified
 from pyrogram.types import ChatPermissions, Message
 
-FIX_VERSION = "2026-08-15-self-idle-activation-fix-v11"
+FIX_VERSION = "2026-08-15-self-session-activation-fix-v12"
 print(Fore.GREEN + f"Ultra Self self.py fix version: {FIX_VERSION}" + Fore.RESET)
 
 admin = sys.argv[1]
@@ -482,7 +482,13 @@ async def _majid_download_media(app, chat_id, source_url, reply_to=None, status_
 # ===================== End persistent/API helpers =====================
 
 #_________________________Client___________________________________
-app = Client(f"../../sessions/{admin}", api_id, api_hash, device_model="ULTRA-SELF", system_version="Linux")
+# The parent bot launches this process with cwd=selfs/self-<user_id>.
+# Use an absolute session path so Pyrogram cannot accidentally create a second
+# session in the child working directory.
+SESSION_DIR = os.path.abspath(os.path.join(os.getcwd(), "..", "..", "sessions"))
+os.makedirs(SESSION_DIR, exist_ok=True)
+SESSION_PATH = os.path.join(SESSION_DIR, str(admin))
+app = Client(SESSION_PATH, api_id, api_hash, device_model="ULTRA-SELF", system_version="Linux")
 client = Client("Self", api_id, api_hash, device_model="ULTRA-SELF", system_version="Linux")
 
 def mak():
@@ -9114,34 +9120,57 @@ scheduler.add_job(antidelmember, "interval", seconds=5)
 scheduler.add_job(mak, "interval", hours=2)
 
 try:
- app.start()
- scheduler.start()
- print(Fore.YELLOW + "started")
+ # Remove stale readiness markers before starting.
+ for _marker in ("ready.flag", "ready.json"):
+  try:
+   os.remove(_marker)
+  except FileNotFoundError:
+   pass
 
- # This message is the real activation proof. If it cannot be sent, do NOT
- # silently pretend the self is healthy; raise the error so bot.py reports it.
+ app.start()
+ print(Fore.YELLOW + "Self client connected; verifying authenticated account..." + Fore.RESET)
+
+ # Do not call the Self active until Telegram confirms the actual User session.
+ me = app.get_me()
+ if me is None or not getattr(me, "id", None):
+  raise RuntimeError("Telegram session connected but get_me() returned no authenticated user")
+ if int(me.id) != int(admin):
+  raise RuntimeError(f"Session identity mismatch: expected {admin}, got {me.id}")
+
+ scheduler.start()
+ print(Fore.GREEN + f"Authenticated Self: {me.id} @{getattr(me, 'username', None) or 'no_username'}" + Fore.RESET)
+
  startup_message_sent = False
  last_startup_error = None
- for _try in range(3):
+ startup_text = "**Hello Self is Running\n© 2024 Ultra Self LLC. All rights reserved.**"
+ for _try in range(5):
   try:
-   app.send_message("me", f"**Hello Self is Running\n© 2024 Ultra Self LLC. All rights reserved.**")
+   app.send_message("me", startup_text)
    startup_message_sent = True
+   print(Fore.GREEN + "Startup message sent to Saved Messages" + Fore.RESET)
    break
   except Exception as e:
    last_startup_error = e
-   print(Fore.YELLOW + f"[Self Warning] Could not send startup message (try {_try + 1}/3): {e}" + Fore.RESET)
-   sleep(3)
+   print(Fore.YELLOW + f"[Self Warning] Startup message failed ({_try + 1}/5): {e}" + Fore.RESET)
+   sleep(min(5, _try + 2))
 
  if not startup_message_sent:
-  raise RuntimeError(f"Self started but could not send startup message to Saved Messages: {last_startup_error}")
+  raise RuntimeError(f"Authenticated Self could not send startup message to Saved Messages: {last_startup_error}")
 
- # Mark ready only after app.start() and startup message both succeeded.
- with open("ready.flag", "w") as ready_file:
+ # This is the activation handshake consumed by bot.py.
+ import json as _json
+ with open("ready.json", "w", encoding="utf-8") as ready_meta:
+  _json.dump({
+   "user_id": int(me.id),
+   "username": getattr(me, "username", None),
+   "started_at": datetime.utcnow().isoformat() + "Z",
+   "startup_message_sent": True,
+   "fix_version": FIX_VERSION
+  }, ready_meta, ensure_ascii=False)
+ with open("ready.flag", "w", encoding="utf-8") as ready_file:
   ready_file.write("ready")
- print(Fore.GREEN + "ready.flag created; entering Pyrogram idle loop" + Fore.RESET)
+ print(Fore.GREEN + "Self activation verified; ready.flag created" + Fore.RESET)
 
- # Critical: Pyrogram update handlers need idle() to keep the client/event loop
- # alive. A plain while/sleep keeps the process alive but commands won't work.
  idle()
 finally:
  try:

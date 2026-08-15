@@ -258,25 +258,37 @@ async def cleanup_login_client(chat_id):
                 pass
         temp_Client.pop(chat_id, None)
 
-async def wait_for_self_ready(process, self_dir, timeout=None):
-    """Wait until self.py confirms it really started.
+async def wait_for_self_ready(process, self_dir, expected_user_id=None, timeout=None):
+    """Wait for a *verified* Self startup, not merely a living child process.
 
-    Checking only `process.poll() is None` is not enough: a process can be alive
-    but stuck before Pyrogram starts. self.py creates ready.flag after app.start().
+    self.py writes ready.json only after its User session is connected, get_me()
+    succeeds and the Saved Messages startup message is sent.
     """
-    timeout = int(_env("SELF_START_TIMEOUT", "35") if timeout is None else timeout)
+    timeout = int(_env("SELF_START_TIMEOUT", "45") if timeout is None else timeout)
     ready_file = os.path.join(self_dir, "ready.flag")
+    ready_meta = os.path.join(self_dir, "ready.json")
     for _ in range(timeout):
-        if os.path.isfile(ready_file) and process.poll() is None:
-            # Make sure self.py does not exit immediately after creating ready.flag.
-            await asyncio.sleep(3)
-            return process.poll() is None
         if process.poll() is not None:
             return False
+        if os.path.isfile(ready_file):
+            if expected_user_id is not None and os.path.isfile(ready_meta):
+                try:
+                    with open(ready_meta, "r", encoding="utf-8") as rf:
+                        meta = json.load(rf)
+                    if int(meta.get("user_id")) != int(expected_user_id):
+                        return False
+                except Exception:
+                    return False
+            # Keep a small grace period so a process cannot report ready and exit immediately.
+            await asyncio.sleep(2)
+            return process.poll() is None
         await asyncio.sleep(1)
     if process.poll() is None:
         try:
             process.terminate()
+            await asyncio.sleep(2)
+            if process.poll() is None:
+                process.kill()
         except Exception:
             pass
     return False
@@ -1059,7 +1071,7 @@ async def update(c, m):
                 error_log_path = os.path.join(self_dir, "error.log")
                 with open(error_log_path, "w") as error_log_file:
                     process = subprocess.Popen(["python3", "-u", "-W", "ignore::SyntaxWarning", "self.py", str(m.chat.id), str(API_ID), API_HASH, Helper_ID], cwd=self_dir, stdout=error_log_file, stderr=subprocess.STDOUT)
-                if await wait_for_self_ready(process, self_dir):
+                if await wait_for_self_ready(process, self_dir, expected_user_id=m.chat.id):
                     if os.path.isfile(error_log_path):
                         os.remove(error_log_path)
                     await app.edit_message_text(chat_id, mess.id, f"سلف با موفقیت برای اکانت شما فعال شد\nمدت زمان اشتراک: {expir_count} روز", reply_markup=InlineKeyboardMarkup(
@@ -1156,7 +1168,7 @@ async def update(c, m):
             error_log_path = os.path.join(self_dir, "error.log")
             with open(error_log_path, "w") as error_log_file:
                 process = subprocess.Popen(["python3", "-u", "-W", "ignore::SyntaxWarning", "self.py", str(m.chat.id), str(API_ID), API_HASH, Helper_ID], cwd=self_dir, stdout=error_log_file, stderr=subprocess.STDOUT)
-            if await wait_for_self_ready(process, self_dir):
+            if await wait_for_self_ready(process, self_dir, expected_user_id=m.chat.id):
                 if os.path.isfile(error_log_path):
                     os.remove(error_log_path)
                 await app.edit_message_text(chat_id, mess.id, f"سلف با موفقیت برای اکانت شما فعال شد\nمدت زمان اشتراک: {expir_count} روز", reply_markup=InlineKeyboardMarkup(
@@ -1767,7 +1779,7 @@ async def update(c, m):
                         error_log_path = os.path.join(self_dir, "error.log")
                         with open(error_log_path, "w") as error_log_file:
                             process = subprocess.Popen(["python3", "-u", "-W", "ignore::SyntaxWarning", "self.py", str(user_id), str(API_ID), API_HASH, Helper_ID], cwd=self_dir, stdout=error_log_file, stderr=subprocess.STDOUT)
-                        if await wait_for_self_ready(process, self_dir):
+                        if await wait_for_self_ready(process, self_dir, expected_user_id=m.chat.id):
                             if os.path.isfile(error_log_path):
                                 os.remove(error_log_path)
                             await app.edit_message_text(Admin, mess.id, "سلف با موفقیت برای این کاربر فعال شد")
