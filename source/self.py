@@ -109,7 +109,7 @@ import pickle
 from pyrogram.errors.exceptions.bad_request_400 import ChatNotModified
 from pyrogram.types import ChatPermissions, Message
 
-FIX_VERSION = "2026-08-14-titan-majidapi-deepfix-v9"
+FIX_VERSION = "2026-08-15-self-keepalive-activation-fix-v10"
 print(Fore.GREEN + f"Ultra Self self.py fix version: {FIX_VERSION}" + Fore.RESET)
 
 admin = sys.argv[1]
@@ -9117,13 +9117,30 @@ try:
  app.start()
  scheduler.start()
  print(Fore.YELLOW + "started")
- try:
-  app.send_message("me", f"**Hello Self is Running\n© 2024 Ultra Self LLC. All rights reserved.**")
- except Exception as e:
-  print(Fore.YELLOW + f"[Self Warning] Started but could not send startup message: {e}" + Fore.RESET)
+
+ # Send a real startup message to Saved Messages. If Telegram temporarily
+ # rejects it (FloodWait/network), retry a few times instead of silently
+ # marking the self as ready while it is not usable.
+ startup_message_sent = False
+ for _try in range(3):
+  try:
+   app.send_message("me", f"**Hello Self is Running\n© 2024 Ultra Self LLC. All rights reserved.**")
+   startup_message_sent = True
+   break
+  except Exception as e:
+   print(Fore.YELLOW + f"[Self Warning] Could not send startup message (try {_try + 1}/3): {e}" + Fore.RESET)
+   sleep(3)
+
+ # Mark ready only after app.start() succeeded and the client stayed alive.
  with open("ready.flag", "w") as ready_file:
   ready_file.write("ready")
- idle()
+ print(Fore.GREEN + "ready.flag created; entering keep-alive loop" + Fore.RESET)
+
+ # IMPORTANT: In some Railway/subprocess environments pyrogram.idle() can return
+ # immediately, causing self.py to stop right after ready.flag is created. Keep
+ # the process alive explicitly so handlers continue receiving commands.
+ while True:
+  sleep(60)
 finally:
  try:
   scheduler.shutdown(wait=False)
