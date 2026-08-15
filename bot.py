@@ -19,7 +19,7 @@ import signal
 import re
 import os
 import traceback
-FIX_VERSION = "2026-08-07-self-startup-deepfix-v8"
+FIX_VERSION = "2026-08-15-self-keepalive-activation-fix-v10"
 print(f"{Fore.GREEN}Ultra Self worker fix version: {FIX_VERSION}{Fore.RESET}")
 
 # MySQL Database - Try EVERY possible Railway variable name
@@ -268,7 +268,9 @@ async def wait_for_self_ready(process, self_dir, timeout=None):
     ready_file = os.path.join(self_dir, "ready.flag")
     for _ in range(timeout):
         if os.path.isfile(ready_file) and process.poll() is None:
-            return True
+            # Make sure self.py does not exit immediately after creating ready.flag.
+            await asyncio.sleep(3)
+            return process.poll() is None
         if process.poll() is not None:
             return False
         await asyncio.sleep(1)
